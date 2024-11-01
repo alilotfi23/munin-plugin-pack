@@ -1,0 +1,27 @@
+# Editor and OS files
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.bak
+*.tmp
+*.orig
+
+# Build artifacts
+*.tar.gz
+*.zip
+munin-plugin-pack-*.tar.gz
+
+# Test artifacts
+tests/tmp/
+tests/output/
+coverage/
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+
+# Shell debug
+shellcheck.tmp
