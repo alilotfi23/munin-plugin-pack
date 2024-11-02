@@ -1,0 +1,96 @@
+#!/bin/sh
+# munin-plugin-pack: Docker Container Monitor
+# Track running, stopped, restarting, and paused containers.
+#
+# Requirements: docker CLI
+# Config variables (optional, via env or munin config):
+#   docker_host    - Docker host URI (default: unix:///var/run/docker.sock)
+#
+# SPDX-License-Identifier: MIT
+
+set -eu
+
+DOCKER_HOST="${docker_host:-unix:///var/run/docker.sock}"
+PLUGIN_NAME="docker_containers"
+
+# --- autoconf: check if docker is available ---
+if [ "${1:-}" = "autoconf" ]; then
+    if command -v docker >/dev/null 2>&1; then
+        # Verify we can actually talk to the daemon
+        if docker -H "$DOCKER_HOST" info >/dev/null 2>&1; then
+            echo "yes"
+        else
+            echo "no (cannot connect to docker daemon at $DOCKER_HOST)"
+        fi
+    else
+        echo "no (docker command not found)"
+    fi
+    exit 0
+fi
+
+# --- config: graph definition ---
+if [ "${1:-}" = "config" ]; then
+    cat <<'EOF'
+graph_title Docker Containers
+graph_args --base 1000 -l 0
+graph_vlabel Containers
+graph_category docker
+graph_info Tracks the number of Docker containers by status (running, stopped, restarting, paused).
+running.label Running
+running.draw AREA
+running.colour 00ff00
+running.info Number of currently running containers.
+stopped.label Stopped
+stopped.draw STACK
+stopped.colour ff0000
+stopped.info Number of stopped containers.
+restarting.label Restarting
+restarting.draw STACK
+restarting.colour ffaa00
+restarting.info Number of containers in a restart loop.
+paused.label Paused
+paused.draw STACK
+paused.colour 88ccff
+paused.info Number of paused containers.
+EOF
+    exit 0
+fi
+
+# --- fetch: gather metrics ---
+if ! command -v docker >/dev/null 2>&1; then
+    echo "error: docker command not found" >&2
+    echo "running.value U"
+    echo "stopped.value U"
+    echo "restarting.value U"
+    echo "paused.value U"
+    exit 0
+fi
+
+# Collect container status via docker CLI
+running=0
+stopped=0
+restarting=0
+paused=0
+
+docker -H "$DOCKER_HOST" ps -a --format '{{.Status}}' 2>/dev/null | while IFS= read -r line; do
+    case "$line" in
+        "Up "*|"Restarting"*) ;;
+    esac
+done
+
+# More efficient: use docker stats format
+running=$(docker -H "$DOCKER_HOST" ps -q -f "status=running" 2>/dev/null | wc -l)
+stopped=$(docker -H "$DOCKER_HOST" ps -q -f "status=exited" 2>/dev/null | wc -l)
+restarting=$(docker -H "$DOCKER_HOST" ps -q -f "status=restarting" 2>/dev/null | wc -l)
+paused=$(docker -H "$DOCKER_HOST" ps -q -f "status=paused" 2>/dev/null | wc -l)
+
+# Sanitize: ensure numeric output (trim whitespace)
+running=$(echo "$running" | tr -d '[:space:]')
+stopped=$(echo "$stopped" | tr -d '[:space:]')
+restarting=$(echo "$restarting" | tr -d '[:space:]')
+paused=$(echo "$paused" | tr -d '[:space:]')
+
+echo "running.value ${running:-0}"
+echo "stopped.value ${stopped:-0}"
+echo "restarting.value ${restarting:-0}"
+echo "paused.value ${paused:-0}"
