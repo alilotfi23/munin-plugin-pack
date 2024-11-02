@@ -1,0 +1,104 @@
+#!/bin/sh
+# munin-plugin-pack: Docker Disk Usage
+# Monitor Docker disk usage breakdown (images, containers, volumes, build cache).
+#
+# Requirements: docker CLI
+# Config variables:
+#   docker_host - Docker host URI (default: unix:///var/run/docker.sock)
+#
+# SPDX-License-Identifier: MIT
+
+set -eu
+
+DOCKER_HOST="${docker_host:-unix:///var/run/docker.sock}"
+PLUGIN_NAME="docker_disk_usage"
+
+# --- autoconf ---
+if [ "${1:-}" = "autoconf" ]; then
+    if command -v docker >/dev/null 2>&1; then
+        if docker -H "$DOCKER_HOST" info >/dev/null 2>&1; then
+            echo "yes"
+        else
+            echo "no (cannot connect to docker daemon)"
+        fi
+    else
+        echo "no (docker command not found)"
+    fi
+    exit 0
+fi
+
+# --- config ---
+if [ "${1:-}" = "config" ]; then
+    cat <<'EOF'
+graph_title Docker Disk Usage
+graph_args --base 1024 -l 0
+graph_vlabel Bytes
+graph_category docker
+graph_info Docker disk usage breakdown by category (images, containers, volumes, build cache).
+images.label Images
+images.draw AREA
+images.colour 0066ff
+images.info Disk space used by Docker images.
+containers.label Containers
+containers.draw STACK
+containers.colour 00cc00
+containers.info Disk space used by Docker containers.
+volumes.label Volumes
+volumes.draw STACK
+volumes.colour ff9900
+volumes.info Disk space used by Docker volumes.
+build_cache.label Build Cache
+build_cache.draw STACK
+build_cache.colour cc00cc
+build_cache.info Disk space used by Docker build cache.
+EOF
+    exit 0
+fi
+
+# --- fetch ---
+if ! command -v docker >/dev/null 2>&1; then
+    echo "images.value U"
+    echo "containers.value U"
+    echo "volumes.value U"
+    echo "build_cache.value U"
+    exit 0
+fi
+
+# Parse docker system df output
+parse_size() {
+    # Convert Docker size string (e.g., "5.2GB", "300MB") to bytes
+    echo "$1" | awk '{
+        val=$1
+        unit=$2
+        if (unit ~ /GB/) printf "%.0f", val*1073741824
+        else if (unit ~ /MB/) printf "%.0f", val*1048576
+        else if (unit ~ /kB/) printf "%.0f", val*1024
+        else if (unit ~ /B/) printf "%.0f", val
+        else printf "%.0f", val
+    }'
+}
+
+# Get disk usage via docker system df
+df_output=$(docker -H "$DOCKER_HOST" system df --format '{{.Type}} {{.Size}}' 2>/dev/null)
+
+images="0"
+containers="0"
+volumes="0"
+build_cache="0"
+
+if [ -n "$df_output" ]; then
+    images=$(echo "$df_output" | awk '$1 == "Images" {print $2, $3}')
+    containers=$(echo "$df_output" | awk '$1 == "Containers" {print $2, $3}')
+    volumes=$(echo "$df_output" | awk '$1 == "Local Volumes" {print $2, $3}')
+    build_cache=$(echo "$df_output" | awk '$1 == "Build Cache" {print $2, $3}')
+
+    images=$(parse_size "$images")
+    containers=$(parse_size "$containers")
+    volumes=$(parse_size "$volumes")
+    build_cache=$(parse_size "$build_cache")
+fi
+
+echo "images.value ${images:-0}"
+echo "containers.value ${containers:-0}"
+echo "volumes.value ${volumes:-0}"
+echo "build_cache.value ${build_cache:-0}"
