@@ -1,0 +1,88 @@
+#!/bin/sh
+# munin-plugin-pack: Docker Images Monitor
+# Track image count, dangling images, and total image size.
+#
+# Requirements: docker CLI
+# Config variables:
+#   docker_host - Docker host URI (default: unix:///var/run/docker.sock)
+#
+# SPDX-License-Identifier: MIT
+
+set -eu
+
+DOCKER_HOST="${docker_host:-unix:///var/run/docker.sock}"
+PLUGIN_NAME="docker_images"
+
+# --- autoconf ---
+if [ "${1:-}" = "autoconf" ]; then
+    if command -v docker >/dev/null 2>&1; then
+        if docker -H "$DOCKER_HOST" info >/dev/null 2>&1; then
+            echo "yes"
+        else
+            echo "no (cannot connect to docker daemon)"
+        fi
+    else
+        echo "no (docker command not found)"
+    fi
+    exit 0
+fi
+
+# --- config ---
+if [ "${1:-}" = "config" ]; then
+    cat <<'EOF'
+graph_title Docker Images
+graph_args --base 1000 -l 0
+graph_vlabel Count / Size
+graph_category docker
+graph_info Tracks Docker image statistics: total images, dangling (unused) images, and total disk usage in GB.
+total_images.label Total Images
+total_images.draw LINE2
+total_images.colour 0000ff
+total_images.info Total number of Docker images.
+dangling_images.label Dangling Images
+dangling_images.draw LINE2
+dangling_images.colour ff0000
+dangling_images.info Number of dangling (untagged) images.
+total_size.label Total Size (GB)
+total_size.draw AREA
+total_size.colour 00cc00
+total_size.info Total disk space used by all Docker images in gigabytes.
+EOF
+    exit 0
+fi
+
+# --- fetch ---
+if ! command -v docker >/dev/null 2>&1; then
+    echo "total_images.value U"
+    echo "dangling_images.value U"
+    echo "total_size.value U"
+    exit 0
+fi
+
+# Total image count
+total_images=$(docker -H "$DOCKER_HOST" images -q 2>/dev/null | wc -l)
+total_images=$(echo "$total_images" | tr -d '[:space:]')
+
+# Dangling image count
+dangling_images=$(docker -H "$DOCKER_HOST" images -f "dangling=true" -q 2>/dev/null | wc -l)
+dangling_images=$(echo "$dangling_images" | tr -d '[:space:]')
+
+# Total image size (parse from docker system df)
+size_raw=$(docker -H "$DOCKER_HOST" system df --format '{{.Size}}' 2>/dev/null | head -1)
+total_size="0"
+if [ -n "$size_raw" ]; then
+    # Convert size string (e.g., "12.5GB") to numeric GB value
+    total_size=$(echo "$size_raw" | awk '
+        {
+            val=$1
+            if ($2 ~ /GB/) printf "%.2f", val
+            else if ($2 ~ /MB/) printf "%.4f", val/1024
+            else if ($2 ~ /kB/) printf "%.6f", val/1024/1024
+            else if ($2 ~ /B/) printf "%.9f", val/1024/1024/1024
+            else printf "%.2f", val
+        }')
+fi
+
+echo "total_images.value ${total_images:-0}"
+echo "dangling_images.value ${dangling_images:-0}"
+echo "total_size.value ${total_size:-0}"
