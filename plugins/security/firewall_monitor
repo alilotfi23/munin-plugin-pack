@@ -1,0 +1,110 @@
+#!/bin/sh
+# munin-plugin-pack: Firewall Monitor
+# Monitor iptables and nftables packet counters.
+#
+# Requirements: iptables and/or nft command
+# Config variables:
+#   firewall_type - Force "iptables" or "nftables" (default: auto-detect)
+#
+# SPDX-License-Identifier: MIT
+
+set -eu
+
+PLUGIN_NAME="firewall_monitor"
+FIREWALL_TYPE="${firewall_type:-}"
+
+# --- autoconf ---
+if [ "${1:-}" = "autoconf" ]; then
+    found=0
+    if [ -z "$FIREWALL_TYPE" ] || [ "$FIREWALL_TYPE" = "iptables" ]; then
+        if command -v iptables >/dev/null 2>&1; then
+            found=1
+        fi
+    fi
+    if [ -z "$FIREWALL_TYPE" ] || [ "$FIREWALL_TYPE" = "nftables" ]; then
+        if command -v nft >/dev/null 2>&1; then
+            found=1
+        fi
+    fi
+    if [ "$found" -eq 1 ]; then
+        echo "yes"
+    else
+        echo "no (neither iptables nor nft found)"
+    fi
+    exit 0
+fi
+
+# --- config ---
+if [ "${1:-}" = "config" ]; then
+    cat <<'EOF'
+graph_title Firewall Packets
+graph_args --base 1000 -l 0
+graph_vlabel Packets / sec
+graph_category security
+graph_info Monitors firewall packet counters: dropped, rejected, and accepted packets through iptables or nftables.
+dropped.label Dropped
+dropped.draw LINE2
+dropped.type DERIVE
+dropped.colour ff0000
+dropped.info Packets silently dropped by firewall rules.
+rejected.label Rejected
+rejected.draw LINE2
+rejected.type DERIVE
+rejected.colour ff6600
+rejected.info Packets explicitly rejected by firewall rules.
+accepted.label Accepted
+accepted.draw LINE2
+accepted.type DERIVE
+accepted.colour 00cc00
+accepted.info Packets accepted through firewall rules.
+EOF
+    exit 0
+fi
+
+# --- fetch ---
+dropped=0
+rejected=0
+accepted=0
+
+# Determine which firewall backend to use
+if [ -z "$FIREWALL_TYPE" ]; then
+    if command -v nft >/dev/null 2>&1; then
+        FIREWALL_TYPE="nftables"
+    elif command -v iptables >/dev/null 2>&1; then
+        FIREWALL_TYPE="iptables"
+    else
+        echo "error: no firewall tool found" >&2
+        echo "dropped.value U"
+        echo "rejected.value U"
+        echo "accepted.value U"
+        exit 0
+    fi
+fi
+
+if [ "$FIREWALL_TYPE" = "nftables" ]; then
+    # Parse nftables counters from nft list ruleset
+    nft_list=$(nft list ruleset 2>/dev/null)
+
+    if [ -n "$nft_list" ]; then
+        # Count packets with "drop" action
+        dropped=$(printf '%s\n' "$nft_list" | awk '/drop/ {match($0, /packets ([0-9]+)/, a); sum+=a[1]} END {print sum+0}')
+        # Count packets with "reject" action
+        rejected=$(printf '%s\n' "$nft_list" | awk '/reject/ {match($0, /packets ([0-9]+)/, a); sum+=a[1]} END {print sum+0}')
+        # Count packets with "accept" action
+        accepted=$(printf '%s\n' "$nft_list" | awk '/accept/ {match($0, /packets ([0-9]+)/, a); sum+=a[1]} END {print sum+0}')
+    fi
+elif [ "$FIREWALL_TYPE" = "iptables" ]; then
+    # Parse iptables counters from iptables -L -nv
+    ipt_output=$(iptables -L -nxv 2>/dev/null)
+
+    if [ -n "$ipt_output" ]; then
+        # The second column in iptables -nv output is the packet counter
+        dropped=$(printf '%s\n' "$ipt_output" | awk 'toupper($0) ~ /DROP/ {sum+=$2} END {print sum+0}')
+        rejected=$(printf '%s\n' "$ipt_output" | awk 'toupper($0) ~ /REJECT/ {sum+=$2} END {print sum+0}')
+        accepted=$(printf '%s\n' "$ipt_output" | awk 'toupper($0) ~ /ACCEPT/ {sum+=$2} END {print sum+0}')
+    fi
+fi
+
+echo "dropped.value ${dropped:-0}"
+echo "rejected.value ${rejected:-0}"
+echo "accepted.value ${accepted:-0}"
