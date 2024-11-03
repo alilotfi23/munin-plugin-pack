@@ -1,0 +1,94 @@
+#!/bin/sh
+# munin-plugin-pack: SSH Failed Login Monitor
+# Monitor SSH authentication failures from system logs.
+#
+# Supports: journalctl (systemd) and /var/log/auth.log (traditional syslog)
+# Config variables:
+#   auth_log     - Path to auth log file (default: auto-detect)
+#   time_range   - Journalctl time range (default: "since 1 hour ago")
+#
+# SPDX-License-Identifier: MIT
+
+set -eu
+
+PLUGIN_NAME="ssh_failed_logins"
+AUTH_LOG="${auth_log:-}"
+TIME_RANGE="${time_range:-since 1 hour ago}"
+
+# --- autoconf ---
+if [ "${1:-}" = "autoconf" ]; then
+    # Check for journalctl or auth log
+    if command -v journalctl >/dev/null 2>&1; then
+        echo "yes"
+    elif [ -f /var/log/auth.log ]; then
+        echo "yes"
+    elif [ -f /var/log/secure ]; then
+        echo "yes"
+    else
+        echo "no (no journalctl or auth log found)"
+    fi
+    exit 0
+fi
+
+# --- config ---
+if [ "${1:-}" = "config" ]; then
+    cat <<'EOF'
+graph_title SSH Failed Logins
+graph_args --base 1000 -l 0
+graph_vlabel Attempts
+graph_category security
+graph_info Monitors SSH authentication failures including failed passwords, invalid users, and root login attempts.
+failed.label Failed Logins
+failed.draw LINE2
+failed.colour ff0000
+failed.info Total number of failed SSH login attempts.
+invalid.label Invalid Users
+invalid.draw LINE2
+invalid.colour ff6600
+invalid.info Attempts with non-existent usernames.
+root.label Root Attempts
+root.draw LINE2
+root.colour ff0000
+root.info Direct root login attempts (valid or invalid password).
+EOF
+    exit 0
+fi
+
+# --- fetch ---
+# Try journalctl first, fall back to log files
+get_log_source() {
+    if [ -n "$AUTH_LOG" ]; then
+        cat "$AUTH_LOG"
+    elif command -v journalctl >/dev/null 2>&1; then
+        journalctl -u sshd --no-pager "$TIME_RANGE" 2>/dev/null || \
+        journalctl -u ssh --no-pager "$TIME_RANGE" 2>/dev/null || \
+        journalctl _SYSTEMD_UNIT=sshd.service --no-pager "$TIME_RANGE" 2>/dev/null
+    elif [ -f /var/log/auth.log ]; then
+        # Last hour of entries
+        grep "sshd\[" /var/log/auth.log 2>/dev/null
+    elif [ -f /var/log/secure ]; then
+        grep "sshd\[" /var/log/secure 2>/dev/null
+    fi
+}
+
+log_data=$(get_log_source)
+
+if [ -z "$log_data" ]; then
+    echo "failed.value 0"
+    echo "invalid.value 0"
+    echo "root.value 0"
+    exit 0
+fi
+
+# Count failed logins (Failed password)
+failed=$(printf '%s\n' "$log_data" | grep -ci "Failed password" 2>/dev/null || echo 0)
+
+# Count invalid user attempts
+invalid=$(printf '%s\n' "$log_data" | grep -ci "Invalid user" 2>/dev/null || echo 0)
+
+# Count root login attempts
+root=$(printf '%s\n' "$log_data" | grep -ci "Failed password for root" 2>/dev/null || echo 0)
+
+echo "failed.value ${failed:-0}"
+echo "invalid.value ${invalid:-0}"
+echo "root.value ${root:-0}"
