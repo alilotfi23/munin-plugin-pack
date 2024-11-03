@@ -1,0 +1,113 @@
+#!/bin/sh
+# munin-plugin-pack: SSL Certificate Expiration
+# Monitor SSL certificate expiration for configured hostnames.
+#
+# Requirements: openssl
+# Config variables:
+#   ssl_hosts     - Space-separated list of host:port pairs (default: localhost:443)
+#
+# Example munin config:
+#   [ssl_cert_expiry]
+#     env.ssl_hosts "example.com:443 api.example.com:443"
+#
+# SPDX-License-Identifier: MIT
+
+set -eu
+
+PLUGIN_NAME="ssl_cert_expiry"
+SSL_HOSTS="${ssl_hosts:-localhost:443}"
+
+# --- autoconf ---
+if [ "${1:-}" = "autoconf" ]; then
+    if command -v openssl >/dev/null 2>&1; then
+        echo "yes"
+    else
+        echo "no (openssl command not found)"
+    fi
+    exit 0
+fi
+
+# --- suggest ---
+if [ "${1:-}" = "suggest" ]; then
+    echo "default: localhost:443"
+    exit 0
+fi
+
+# --- config ---
+if [ "${1:-}" = "config" ]; then
+    cat <<'EOF'
+graph_title SSL Certificate Expiration
+graph_args --base 1000 -l 0
+graph_vlabel Days remaining
+graph_category security
+graph_info Number of days until SSL certificates expire for configured hosts. Values below 30 indicate renewal is needed.
+EOF
+
+    # Generate config fields for each host
+    idx=0
+    for host in $SSL_HOSTS; do
+        # Create a safe label from hostname
+        label=$(echo "$host" | sed 's/[:.]/_/g' | sed 's/^_*//')
+        idx=$((idx + 1))
+
+        # Alternate colours for readability
+        case $((idx % 4)) in
+            1) colour="00ff00" ;;
+            2) colour="0088ff" ;;
+            3) colour="ff8800" ;;
+            0) colour="cc00cc" ;;
+        esac
+
+        cat <<EOF
+${label}.label ${host}
+${label}.draw LINE2
+${label}.colour ${colour}
+${label}.warning 30
+${label}.critical 7
+${label}.info Days until ${host} certificate expires.
+EOF
+    done
+    exit 0
+fi
+
+# --- fetch ---
+if ! command -v openssl >/dev/null 2>&1; then
+    for host in $SSL_HOSTS; do
+        label=$(echo "$host" | sed 's/[:.]/_/g' | sed 's/^_*//')
+        echo "${label}.value U"
+    done
+    exit 0
+fi
+
+get_cert_days() {
+    host="$1"
+    port="${host##*:}"
+    hostname="${host%:*}"
+
+    # Use openssl s_client to fetch certificate expiry
+    cert_end_date=$(echo | openssl s_client -servername "$hostname" -connect "$hostname:$port" 2>/dev/null | \
+        openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
+
+    if [ -z "$cert_end_date" ]; then
+        echo "U"
+        return
+    fi
+
+    # Convert dates to epoch seconds and calculate difference
+    end_epoch=$(date -d "$cert_end_date" +%s 2>/dev/null)
+    now_epoch=$(date +%s)
+
+    if [ -z "$end_epoch" ]; then
+        echo "U"
+        return
+    fi
+
+    days_left=$(( (end_epoch - now_epoch) / 86400 ))
+    echo "$days_left"
+}
+
+for host in $SSL_HOSTS; do
+    label=$(echo "$host" | sed 's/[:.]/_/g' | sed 's/^_*//')
+    days=$(get_cert_days "$host")
+    echo "${label}.value ${days}"
+done
