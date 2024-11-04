@@ -1,0 +1,112 @@
+#!/bin/sh
+# munin-plugin-pack: Internet Latency Monitor
+# Ping configurable hosts and report latency + packet loss.
+#
+# Requirements: ping (iputils or iputils-ping)
+# Config variables:
+#   ping_hosts   - Space-separated list of hosts (default: 8.8.8.8 1.1.1.1)
+#   ping_count   - Number of pings per host (default: 5)
+#   ping_timeout - Timeout in seconds (default: 2)
+#
+# Example munin config:
+#   [latency]
+#     env.ping_hosts "8.8.8.8 1.1.1.1 208.67.222.222"
+#
+# SPDX-License-Identifier: MIT
+
+set -eu
+
+PLUGIN_NAME="latency"
+PING_HOSTS="${ping_hosts:-8.8.8.8 1.1.1.1}"
+PING_COUNT="${ping_count:-5}"
+PING_TIMEOUT="${ping_timeout:-2}"
+
+# --- autoconf ---
+if [ "${1:-}" = "autoconf" ]; then
+    if command -v ping >/dev/null 2>&1; then
+        # Verify at least one host responds
+        if ping -c 1 -W "$PING_TIMEOUT" $(echo "$PING_HOSTS" | awk '{print $1}') >/dev/null 2>&1; then
+            echo "yes"
+        else
+            # Still say yes - host may be temporarily down
+            echo "yes"
+        fi
+    else
+        echo "no (ping command not found)"
+    fi
+    exit 0
+fi
+
+# --- suggest ---
+if [ "${1:-}" = "suggest" ]; then
+    echo "default: 8.8.8.8 1.1.1.1"
+    exit 0
+fi
+
+# --- config ---
+if [ "${1:-}" = "config" ]; then
+    cat <<'EOF'
+graph_title Internet Latency
+graph_args --base 1000 -l 0 --lower-limit 0
+graph_vlabel ms / %
+graph_category network
+graph_info Measures network latency and packet loss to configured hosts via ICMP ping.
+EOF
+
+    idx=0
+    for host in $PING_HOSTS; do
+        label=$(echo "$host" | sed 's/[:.]/_/g')
+        idx=$((idx + 1))
+
+        case $((idx % 4)) in
+            1) colour="0088ff" ;;
+            2) colour="00cc00" ;;
+            3) colour="ff8800" ;;
+            0) colour="cc00cc" ;;
+        esac
+
+        cat <<EOF
+${label}_latency.label ${host} latency
+${label}_latency.draw LINE2
+${label}_latency.colour ${colour}
+${label}_latency.info Round-trip latency to ${host} in milliseconds.
+${label}_loss.label ${host} loss
+${label}_loss.draw LINE2
+${label}_loss.colour ff0000
+${label}_loss.info Packet loss percentage to ${host}.
+EOF
+    done
+    exit 0
+fi
+
+# --- fetch ---
+if ! command -v ping >/dev/null 2>&1; then
+    for host in $PING_HOSTS; do
+        label=$(echo "$host" | sed 's/[:.]/_/g')
+        echo "${label}_latency.value U"
+        echo "${label}_loss.value U"
+    done
+    exit 0
+fi
+
+for host in $PING_HOSTS; do
+    label=$(echo "$host" | sed 's/[:.]/_/g')
+
+    # Determine ping flags for different OS variants
+    ping_output=$(ping -c "$PING_COUNT" -W "$PING_TIMEOUT" "$host" 2>/dev/null)
+
+    if [ -z "$ping_output" ]; then
+        echo "${label}_latency.value U"
+        echo "${label}_loss.value 100"
+        continue
+    fi
+
+    # Parse average latency from: "round-trip min/avg/max/mdev = 1.234/5.678/9.012/1.234 ms"
+    latency=$(echo "$ping_output" | awk -F'[=/]' '/round-trip/ {print $5}' | awk '{printf "%.1f", $1}')
+
+    # Parse packet loss from: "5 packets transmitted, 5 received, 0% packet loss"
+    loss=$(echo "$ping_output" | awk '/packet loss/ {match($0, /([0-9]+)%/, a); print a[1]}')
+
+    echo "${label}_latency.value ${latency:-U}"
+    echo "${label}_loss.value ${loss:-U}"
+done
