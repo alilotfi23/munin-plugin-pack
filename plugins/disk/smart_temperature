@@ -1,0 +1,119 @@
+#!/bin/sh
+# munin-plugin-pack: SMART Disk Temperature
+# Monitor disk temperature and health via smartctl.
+#
+# Requirements: smartmontools (smartctl)
+# Usage: symlink as smart_temp_sda, smart_temp_sdb, etc.
+#   ln -s smart_temperature /etc/munin/plugins/smart_temp_sda
+#
+# Config variables:
+#   smart_devices - Space-separated list of devices (default: auto from symlink)
+#   warn_temp     - Warning temperature threshold (default: 45)
+#   crit_temp     - Critical temperature threshold (default: 55)
+#
+# SPDX-License-Identifier: MIT
+
+set -eu
+
+PLUGIN_NAME="smart_temperature"
+SMART_DEVICES="${smart_devices:-}"
+WARN_TEMP="${warn_temp:-45}"
+CRIT_TEMP="${crit_temp:-55}"
+
+# Auto-detect device from symlink name
+if [ -z "$SMART_DEVICES" ]; then
+    basename_cmd=$(basename "$0" 2>/dev/null || echo "")
+    case "$basename_cmd" in
+        smart_temp_*)
+            SMART_DEVICES="${basename_cmd#smart_temp_}"
+            ;;
+    esac
+fi
+
+# Fallback: detect all disks
+if [ -z "$SMART_DEVICES" ]; then
+    SMART_DEVICES=$(ls /dev/sd[a-z] /dev/nvme[0-9] 2>/dev/null | tr '\n' ' ' | sed 's/ $//')
+fi
+
+# --- autoconf ---
+if [ "${1:-}" = "autoconf" ]; then
+    if command -v smartctl >/dev/null 2>&1; then
+        if [ -n "$SMART_DEVICES" ]; then
+            echo "yes"
+        else
+            echo "no (no disks found)"
+        fi
+    else
+        echo "no (smartctl not found, install smartmontools)"
+    fi
+    exit 0
+fi
+
+# --- suggest ---
+if [ "${1:-}" = "suggest" ]; then
+    for dev in /dev/sd[a-z] /dev/nvme[0-9]; do
+        if [ -e "$dev" ]; then
+            basename_dev=$(basename "$dev")
+            echo "smart_temp_${basename_dev}"
+        fi
+    done
+    exit 0
+fi
+
+# --- config ---
+if [ "${1:-}" = "config" ]; then
+    cat <<EOF
+graph_title SMART Disk Temperature
+graph_args --base 1000 -l 0
+graph_vlabel Celsius
+graph_category disk
+graph_info Disk temperature readings from S.M.A.R.T. for monitored storage devices.
+EOF
+
+    for dev in $SMART_DEVICES; do
+        label=$(basename "$dev" | sed 's/[\/.]/_/g')
+        cat <<EOF
+${label}.label ${label}
+${label}.draw LINE2
+${label}.colour 0088ff
+${label}.warning ${WARN_TEMP}
+${label}.critical ${CRIT_TEMP}
+${label}.info Temperature of ${dev} in degrees Celsius.
+EOF
+    done
+    exit 0
+fi
+
+# --- fetch ---
+if ! command -v smartctl >/dev/null 2>&1; then
+    for dev in $SMART_DEVICES; do
+        label=$(basename "$dev" | sed 's/[\/.]/_/g')
+        echo "${label}.value U"
+    done
+    exit 0
+fi
+
+for dev in $SMART_DEVICES; do
+    label=$(basename "$dev" | sed 's/[\/.]/_/g')
+
+    if [ ! -e "$dev" ]; then
+        echo "${label}.value U"
+        continue
+    fi
+
+    # Use smartctl to read temperature
+    # Try Temperature_Celsius attribute (most common)
+    temp=$(smartctl -A "$dev" 2>/dev/null | awk '/Temperature_Celsius/ {print $10}')
+
+    # Fallback for NVMe drives
+    if [ -z "$temp" ]; then
+        temp=$(smartctl -A "$dev" 2>/dev/null | awk '/Temperature:/ {print $2}')
+    fi
+
+    # Another fallback pattern
+    if [ -z "$temp" ]; then
+        temp=$(smartctl -A "$dev" 2>/dev/null | awk '/^194/ {print $10}')
+    fi
+
+    echo "${label}.value ${temp:-U}"
+done
