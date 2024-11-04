@@ -1,0 +1,115 @@
+#!/bin/sh
+# munin-plugin-pack: Nginx Status Monitor
+# Monitor Nginx stub_status metrics (active, reading, writing, waiting).
+#
+# Requirements: curl or wget, Nginx with stub_status module enabled
+# Config variables:
+#   nginx_status_url - URL to Nginx stub_status (default: http://localhost:80/nginx_status)
+#   nginx_user       - Username for basic auth (optional)
+#   nginx_password   - Password for basic auth (optional)
+#
+# Nginx config example:
+#   location /nginx_status {
+#       stub_status on;
+#       allow 127.0.0.1;
+#       deny all;
+#   }
+#
+# SPDX-License-Identifier: MIT
+
+set -eu
+
+PLUGIN_NAME="nginx_status"
+NGINX_STATUS_URL="${nginx_status_url:-http://localhost:80/nginx_status}"
+NGINX_USER="${nginx_user:-}"
+NGINX_PASSWORD="${nginx_password:-}"
+
+# --- autoconf ---
+if [ "${1:-}" = "autoconf" ]; then
+    if command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; then
+        # Verify the status page is reachable
+        status=$(fetch_nginx_status 2>/dev/null)
+        if echo "$status" | grep -q "Active connections"; then
+            echo "yes"
+        else
+            echo "no (nginx status page not responding at $NGINX_STATUS_URL)"
+        fi
+    else
+        echo "no (curl or wget required)"
+    fi
+    exit 0
+fi
+
+# --- config ---
+if [ "${1:-}" = "config" ]; then
+    cat <<'EOF'
+graph_title Nginx Status
+graph_args --base 1000 -l 0
+graph_vlabel Connections
+graph_category nginx
+graph_info Nginx connection metrics from stub_status: active connections, reading, writing, and waiting.
+active.label Active
+active.draw AREA
+active.colour 0088ff
+active.info Current active connections.
+reading.label Reading
+reading.draw LINE2
+reading.colour 00cc00
+reading.info Connections currently reading request headers.
+writing.label Writing
+writing.draw LINE2
+writing.colour ff8800
+writing.info Connections currently writing response data.
+waiting.label Waiting
+waiting.draw LINE2
+waiting.colour cc00cc
+waiting.info Idle keepalive connections waiting for requests.
+EOF
+    exit 0
+fi
+
+# --- fetch helpers ---
+fetch_nginx_status() {
+    if command -v curl >/dev/null 2>&1; then
+        if [ -n "$NGINX_USER" ] && [ -n "$NGINX_PASSWORD" ]; then
+            curl -s -u "${NGINX_USER}:${NGINX_PASSWORD}" "$NGINX_STATUS_URL" 2>/dev/null
+        else
+            curl -s "$NGINX_STATUS_URL" 2>/dev/null
+        fi
+    elif command -v wget >/dev/null 2>&1; then
+        if [ -n "$NGINX_USER" ] && [ -n "$NGINX_PASSWORD" ]; then
+            wget -q -O - --user="$NGINX_USER" --password="$NGINX_PASSWORD" "$NGINX_STATUS_URL" 2>/dev/null
+        else
+            wget -q -O - "$NGINX_STATUS_URL" 2>/dev/null
+        fi
+    else
+        echo ""
+    fi
+}
+
+# --- fetch ---
+status=$(fetch_nginx_status)
+
+if [ -z "$status" ]; then
+    echo "active.value U"
+    echo "reading.value U"
+    echo "writing.value U"
+    echo "waiting.value U"
+    exit 0
+fi
+
+# Parse nginx stub_status output:
+# Active connections: 5
+# server accepts handled requests
+#  1234 1234 5678
+# Reading: 0 Writing: 1 Waiting: 4
+
+active=$(echo "$status" | awk '/^Active connections:/ {print $3}')
+reading=$(echo "$status" | awk '/^Reading:/ {split($2,a,":"); print a[1]}')
+writing=$(echo "$status" | awk '/^Reading:/ {split($4,a,":"); print a[1]}')
+waiting=$(echo "$status" | awk '/^Reading:/ {split($6,a,":"); print a[1]}')
+
+echo "active.value ${active:-0}"
+echo "reading.value ${reading:-0}"
+echo "writing.value ${writing:-0}"
+echo "waiting.value ${waiting:-0}"
