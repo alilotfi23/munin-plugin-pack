@@ -1,0 +1,102 @@
+#!/bin/sh
+# munin-plugin-pack: REST API Health Monitor
+# Monitor HTTP health endpoint: response time, status code, availability.
+#
+# Requirements: curl
+# Config variables:
+#   api_url        - Health endpoint URL (default: http://localhost:8080/health)
+#   api_timeout    - Timeout in seconds (default: 5)
+#   api_expect     - Expected HTTP status code (default: 200)
+#   api_method     - HTTP method (default: GET)
+#
+# SPDX-License-Identifier: MIT
+
+set -eu
+
+PLUGIN_NAME="api_health"
+API_URL="${api_url:-http://localhost:8080/health}"
+API_TIMEOUT="${api_timeout:-5}"
+API_EXPECT="${api_expect:-200}"
+API_METHOD="${api_method:-GET}"
+
+# --- autoconf ---
+if [ "${1:-}" = "autoconf" ]; then
+    if command -v curl >/dev/null 2>&1; then
+        echo "yes"
+    else
+        echo "no (curl command not found)"
+    fi
+    exit 0
+fi
+
+# --- suggest ---
+if [ "${1:-}" = "suggest" ]; then
+    echo "default: http://localhost:8080/health"
+    exit 0
+fi
+
+# --- config ---
+if [ "${1:-}" = "config" ]; then
+    cat <<EOF
+graph_title REST API Health
+graph_args --base 1000 -l 0
+graph_vlabel value
+graph_category web
+graph_info Monitor REST API health endpoint: response time (ms), HTTP status code, and availability (1=up, 0=down).
+response_time.label Response Time (ms)
+response_time.draw LINE2
+response_time.colour 0088ff
+response_time.info HTTP response time in milliseconds from ${API_URL}.
+http_status.label HTTP Status
+http_status.draw LINE2
+http_status.colour 00cc00
+http_status.info HTTP status code returned by ${API_URL}.
+availability.label Availability
+availability.draw AREA
+availability.colour 00ff00
+availability.warning 1:
+availability.critical 0.5:
+availability.info 1 if the endpoint returned expected status (${API_EXPECT}), 0 otherwise.
+EOF
+    exit 0
+fi
+
+# --- fetch ---
+if ! command -v curl >/dev/null 2>&1; then
+    echo "response_time.value U"
+    echo "http_status.value U"
+    echo "availability.value U"
+    exit 0
+fi
+
+# Use curl with timing and output capture
+# -w writes format string to stdout, -o discards body
+result=$(curl -s -o /dev/null \
+    -w "%{http_code} %{time_total}" \
+    -X "$API_METHOD" \
+    --max-time "$API_TIMEOUT" \
+    "$API_URL" 2>/dev/null)
+
+if [ -z "$result" ]; then
+    echo "response_time.value U"
+    echo "http_status.value 0"
+    echo "availability.value 0"
+    exit 0
+fi
+
+http_status=$(echo "$result" | cut -d' ' -f1)
+time_total=$(echo "$result" | cut -d' ' -f2)
+
+# Convert seconds to milliseconds
+response_time=$(echo "$time_total" | awk '{printf "%.0f", $1 * 1000}')
+
+# Availability: 1 if status matches expected, 0 otherwise
+if [ "$http_status" = "$API_EXPECT" ]; then
+    availability=1
+else
+    availability=0
+fi
+
+echo "response_time.value ${response_time:-0}"
+echo "http_status.value ${http_status:-0}"
+echo "availability.value ${availability}"
