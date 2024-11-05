@@ -1,0 +1,96 @@
+#!/bin/sh
+# munin-plugin-pack: CPU Temperature Monitor
+# Monitor CPU temperature using lm-sensors or /sys/class/thermal.
+#
+# Requirements: lm-sensors (sensors command) OR sysfs thermal zones
+# Config variables:
+#   temp_source   - Force "sysfs" or "sensors" (default: auto-detect)
+#   temp_zone     - Specific thermal zone for sysfs (default: 0)
+#   warn_temp     - Warning temperature (default: 70)
+#   crit_temp     - Critical temperature (default: 85)
+#
+# SPDX-License-Identifier: MIT
+
+set -eu
+
+PLUGIN_NAME="cpu_temperature"
+TEMP_SOURCE="${temp_source:-}"
+TEMP_ZONE="${temp_zone:-0}"
+WARN_TEMP="${warn_temp:-70}"
+CRIT_TEMP="${crit_temp:-85}"
+
+# --- autoconf ---
+if [ "${1:-}" = "autoconf" ]; then
+    found=0
+    if [ -z "$TEMP_SOURCE" ] || [ "$TEMP_SOURCE" = "sysfs" ]; then
+        if [ -f "/sys/class/thermal/thermal_zone${TEMP_ZONE}/temp" ]; then
+            found=1
+        fi
+    fi
+    if [ -z "$TEMP_SOURCE" ] || [ "$TEMP_SOURCE" = "sensors" ]; then
+        if command -v sensors >/dev/null 2>&1; then
+            found=1
+        fi
+    fi
+    if [ "$found" -eq 1 ]; then
+        echo "yes"
+    else
+        echo "no (no temperature source found)"
+    fi
+    exit 0
+fi
+
+# --- config ---
+if [ "${1:-}" = "config" ]; then
+    cat <<EOF
+graph_title CPU Temperature
+graph_args --base 1000 -l 0
+graph_vlabel Celsius
+graph_category system
+graph_info CPU temperature reading from lm-sensors or sysfs thermal zones.
+temperature.label CPU Temp
+temperature.draw LINE2
+temperature.colour ff4400
+temperature.warning ${WARN_TEMP}
+temperature.critical ${CRIT_TEMP}
+temperature.info Current CPU temperature in degrees Celsius.
+EOF
+    exit 0
+fi
+
+# --- fetch ---
+temp_value="U"
+
+# Auto-detect source
+if [ -z "$TEMP_SOURCE" ]; then
+    if [ -f "/sys/class/thermal/thermal_zone${TEMP_ZONE}/temp" ]; then
+        TEMP_SOURCE="sysfs"
+    elif command -v sensors >/dev/null 2>&1; then
+        TEMP_SOURCE="sensors"
+    fi
+fi
+
+if [ "$TEMP_SOURCE" = "sysfs" ]; then
+    zone_file="/sys/class/thermal/thermal_zone${TEMP_ZONE}/temp"
+    if [ -f "$zone_file" ]; then
+        raw_temp=$(cat "$zone_file" 2>/dev/null)
+        if [ -n "$raw_temp" ]; then
+            # sysfs reports temperature in millidegrees Celsius
+            temp_value=$(echo "$raw_temp" | awk '{printf "%.1f", $1/1000}')
+        fi
+    fi
+elif [ "$TEMP_SOURCE" = "sensors" ]; then
+    if command -v sensors >/dev/null 2>&1; then
+        # Try to extract CPU temperature from sensors output
+        # Look for common CPU sensor patterns
+        temp_value=$(sensors 2>/dev/null | awk '
+            /Core [0-9]+:/ || /Package id [0-9]+:/ || /CPU Temp:/ || /temp1:/ {
+                match($0, /\+([0-9.]+)[°]?C/, a)
+                if (a[1] > max || max == "") max = a[1]
+            }
+            END { if (max != "") printf "%.1f", max }
+        ')
+    fi
+fi
+
+echo "temperature.value ${temp_value:-U}"
