@@ -1,0 +1,119 @@
+#!/bin/sh
+# munin-plugin-pack: Backup Age Monitor
+# Monitor backup directory: age of newest and oldest backups, total count.
+#
+# Requirements: find, stat, date
+# Config variables:
+#   backup_dir       - Path to backup directory (default: /var/backups)
+#   backup_pattern   - File glob pattern (default: *)
+#   backup_max_age   - Warning threshold in hours (default: 48)
+#   backup_crit_age  - Critical threshold in hours (default: 72)
+#
+# SPDX-License-Identifier: MIT
+
+set -eu
+
+PLUGIN_NAME="backup_age"
+BACKUP_DIR="${backup_dir:-/var/backups}"
+BACKUP_PATTERN="${backup_pattern:-*}"
+BACKUP_MAX_AGE="${backup_max_age:-48}"
+BACKUP_CRIT_AGE="${backup_crit_age:-72}"
+
+# --- autoconf ---
+if [ "${1:-}" = "autoconf" ]; then
+    if [ -d "$BACKUP_DIR" ]; then
+        echo "yes"
+    else
+        echo "no (backup directory $BACKUP_DIR not found)"
+    fi
+    exit 0
+fi
+
+# --- suggest ---
+if [ "${1:-}" = "suggest" ]; then
+    echo "default: ${BACKUP_DIR}"
+    exit 0
+fi
+
+# --- config ---
+if [ "${1:-}" = "config" ]; then
+    cat <<EOF
+graph_title Backup Age
+graph_args --base 1000 -l 0
+graph_vlabel Hours / Count
+graph_category backup
+graph_info Monitors backup freshness: age of newest backup, oldest backup, and total backup count from ${BACKUP_DIR}.
+newest_age.label Newest Backup Age (hours)
+newest_age.draw LINE2
+newest_age.colour 00cc00
+newest_age.warning ${BACKUP_MAX_AGE}
+newest_age.critical ${BACKUP_CRIT_AGE}
+newest_age.info Age of the most recent backup in hours.
+oldest_age.label Oldest Backup Age (hours)
+oldest_age.draw LINE2
+oldest_age.colour ff6600
+oldest_age.info Age of the oldest backup in hours.
+backup_count.label Backup Count
+backup_count.draw AREA
+backup_count.colour 0088ff
+backup_count.info Total number of backups in the directory.
+EOF
+    exit 0
+fi
+
+# --- fetch ---
+if [ ! -d "$BACKUP_DIR" ]; then
+    echo "newest_age.value U"
+    echo "oldest_age.value U"
+    echo "backup_count.value U"
+    exit 0
+fi
+
+now_epoch=$(date +%s)
+
+# Find all backup files and get their modification times
+backups=$(find "$BACKUP_DIR" -maxdepth 1 -name "$BACKUP_PATTERN" -type f 2>/dev/null)
+
+if [ -z "$backups" ]; then
+    echo "newest_age.value U"
+    echo "oldest_age.value U"
+    echo "backup_count.value 0"
+    exit 0
+fi
+
+# Get newest and oldest backup ages in hours
+newest_epoch=0
+oldest_epoch="$now_epoch"
+
+while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    file_epoch=$(stat -c %Y "$file" 2>/dev/null || stat -f %m "$file" 2>/dev/null)
+    if [ -n "$file_epoch" ]; then
+        # Newest = most recent = highest epoch
+        if [ "$file_epoch" -gt "$newest_epoch" ]; then
+            newest_epoch="$file_epoch"
+        fi
+        # Oldest = least recent = lowest epoch
+        if [ "$file_epoch" -lt "$oldest_epoch" ]; then
+            oldest_epoch="$file_epoch"
+        fi
+    fi
+done <<EOF
+$backups
+EOF
+
+# Calculate age in hours (3600 seconds per hour)
+if [ "$newest_epoch" -gt 0 ]; then
+    newest_age=$(( (now_epoch - newest_epoch) / 3600 ))
+else
+    newest_age="U"
+fi
+
+oldest_age=$(( (now_epoch - oldest_epoch) / 3600 ))
+
+# Count backups
+backup_count=$(printf '%s\n' "$backups" | grep -c . 2>/dev/null || echo 0)
+
+echo "newest_age.value ${newest_age:-0}"
+echo "oldest_age.value ${oldest_age:-0}"
+echo "backup_count.value ${backup_count:-0}"
