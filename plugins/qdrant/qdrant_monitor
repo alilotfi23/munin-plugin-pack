@@ -1,0 +1,116 @@
+#!/bin/sh
+# munin-plugin-pack: Qdrant Monitor
+# Monitor Qdrant vector database metrics via its Prometheus endpoint.
+#
+# Requirements: curl
+# Config variables:
+#   qdrant_url      - Qdrant metrics URL (default: http://localhost:6333/metrics)
+#   qdrant_timeout  - Request timeout in seconds (default: 5)
+#
+# SPDX-License-Identifier: MIT
+
+set -eu
+
+PLUGIN_NAME="qdrant_monitor"
+QDRANT_URL="${qdrant_url:-http://localhost:6333/metrics}"
+QDRANT_TIMEOUT="${qdrant_timeout:-5}"
+
+# --- autoconf ---
+if [ "${1:-}" = "autoconf" ]; then
+    if command -v curl >/dev/null 2>&1; then
+        if curl -s --max-time "$QDRANT_TIMEOUT" "$QDRANT_URL" 2>/dev/null | grep -q "qdrant"; then
+            echo "yes"
+        else
+            echo "no (qdrant metrics not reachable at $QDRANT_URL)"
+        fi
+    else
+        echo "no (curl command not found)"
+    fi
+    exit 0
+fi
+
+# --- config ---
+if [ "${1:-}" = "config" ]; then
+    cat <<EOF
+graph_title Qdrant Status
+graph_args --base 1000 -l 0
+graph_vlabel value
+graph_category database
+graph_info Qdrant vector database metrics from ${QDRANT_URL}: collections, vectors, requests, memory, and uptime.
+collections.label Collections
+collections.draw LINE2
+collections.colour 0088ff
+collections.info Number of vector collections in Qdrant.
+vectors.label Total Vectors
+vectors.draw LINE2
+vectors.colour 00cc00
+vectors.info Total number of indexed vectors across all collections.
+requests.label Requests (total)
+requests.draw AREA
+requests.type DERIVE
+requests.colour ffaa00
+requests.info Total number of API requests processed.
+memory.label Memory (bytes)
+memory.draw AREA
+memory.colour cc00cc
+memory.info RSS memory usage of the Qdrant process.
+uptime.label Uptime (seconds)
+uptime.draw LINE2
+uptime.colour ff4400
+uptime.info Qdrant process uptime in seconds.
+EOF
+    exit 0
+fi
+
+# --- fetch ---
+if ! command -v curl >/dev/null 2>&1; then
+    echo "collections.value U"
+    echo "vectors.value U"
+    echo "requests.value U"
+    echo "memory.value U"
+    echo "uptime.value U"
+    exit 0
+fi
+
+metrics=$(curl -s --max-time "$QDRANT_TIMEOUT" "$QDRANT_URL" 2>/dev/null)
+
+if [ -z "$metrics" ]; then
+    echo "collections.value U"
+    echo "vectors.value U"
+    echo "requests.value U"
+    echo "memory.value U"
+    echo "uptime.value U"
+    exit 0
+fi
+
+# Parse Prometheus-style metrics
+# Qdrant exposes metrics like: qdrant_collections_total 5
+parse_metric() {
+    printf '%s\n' "$metrics" | awk -v name="$1" '$1 == name {print $2}' | tail -1
+}
+
+collections=$(parse_metric "qdrant_collections_total")
+
+# Sum vector counts across all collections
+vectors=$(printf '%s\n' "$metrics" | awk '/qdrant_vectors_total/ {sum+=$2} END {print sum+0}')
+
+# Total requests
+requests=$(parse_metric "qdrant_grpc_requests_total")
+if [ -z "$requests" ]; then
+    requests=$(printf '%s\n' "$metrics" | awk '/qdrant_requests_total/ {sum+=$2} END {print sum+0}')
+fi
+
+# Memory (RSS)
+memory=$(printf '%s\n' "$metrics" | awk '/process_resident_memory_bytes/ {print $2}' | tail -1)
+
+# Uptime
+uptime=$(parse_metric "process_uptime_seconds")
+if [ -z "$uptime" ]; then
+    uptime=$(printf '%s\n' "$metrics" | awk '/qdrant_uptime/ {print $2}' | tail -1)
+fi
+
+echo "collections.value ${collections:-0}"
+echo "vectors.value ${vectors:-0}"
+echo "requests.value ${requests:-0}"
+echo "memory.value ${memory:-0}"
+echo "uptime.value ${uptime:-0}"
