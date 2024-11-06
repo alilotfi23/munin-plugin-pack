@@ -1,0 +1,111 @@
+#!/bin/sh
+# munin-plugin-pack: Kubernetes Pod Monitor
+# Monitor Kubernetes pod status across all namespaces.
+#
+# Requirements: kubectl configured with current context
+# Config variables:
+#   kubectl_context  - Kubernetes context (default: current)
+#   kubectl_namespace - Namespace to monitor (default: --all-namespaces)
+#
+# SPDX-License-Identifier: MIT
+
+set -eu
+
+PLUGIN_NAME="kubernetes_pods"
+KUBECTL_CONTEXT="${kubectl_context:-}"
+KUBECTL_NS="${kubectl_namespace:-}"
+
+# Build kubectl base command
+KUBECTL_CMD="kubectl"
+if [ -n "$KUBECTL_CONTEXT" ]; then
+    KUBECTL_CMD="$KUBECTL_CMD --context=$KUBECTL_CONTEXT"
+fi
+
+# --- autoconf ---
+if [ "${1:-}" = "autoconf" ]; then
+    if command -v kubectl >/dev/null 2>&1; then
+        if $KUBECTL_CMD cluster-info >/dev/null 2>&1; then
+            echo "yes"
+        else
+            echo "no (cannot connect to Kubernetes cluster)"
+        fi
+    else
+        echo "no (kubectl command not found)"
+    fi
+    exit 0
+fi
+
+# --- config ---
+if [ "${1:-}" = "config" ]; then
+    cat <<'EOF'
+graph_title Kubernetes Pods
+graph_args --base 1000 -l 0
+graph_vlabel Pods
+graph_category kubernetes
+graph_info Monitor Kubernetes pod counts by phase across all namespaces.
+running.label Running
+running.draw AREA
+running.colour 00cc00
+running.info Number of pods currently in Running state.
+pending.label Pending
+pending.draw STACK
+pending.colour ffaa00
+pending.info Number of pods in Pending state (unscheduled or not ready).
+failed.label Failed
+failed.draw STACK
+failed.colour ff0000
+failed.info Number of pods in Failed state.
+completed.label Completed
+completed.draw STACK
+completed.colour 0088ff
+completed.info Number of completed pods (e.g., Jobs that finished).
+crashloopbackoff.label CrashLoopBackOff
+crashloopbackoff.draw LINE2
+crashloopbackoff.colour ff00ff
+crashloopbackoff.info Number of pods in CrashLoopBackOff state (repeatedly crashing).
+EOF
+    exit 0
+fi
+
+# --- fetch ---
+if ! command -v kubectl >/dev/null 2>&1; then
+    echo "running.value U"
+    echo "pending.value U"
+    echo "failed.value U"
+    echo "completed.value U"
+    echo "crashloopbackoff.value U"
+    exit 0
+fi
+
+# Get pod counts by phase
+ns_arg="--all-namespaces"
+if [ -n "$KUBECTL_NS" ]; then
+    ns_arg="-n $KUBECTL_NS"
+fi
+
+# Get phase counts
+output=$($KUBECTL_CMD get pods $ns_arg -o json 2>/dev/null)
+
+if [ -z "$output" ]; then
+    echo "running.value U"
+    echo "pending.value U"
+    echo "failed.value U"
+    echo "completed.value U"
+    echo "crashloopbackoff.value U"
+    exit 0
+fi
+
+# Parse JSON with awk (no jq dependency)
+running=$(echo "$output" | awk '/"phase"/ {gsub(/[",: ]/, ""); if ($0 ~ /Running/) running++} END {print running+0}')
+pending=$(echo "$output" | awk '/"phase"/ {gsub(/[",: ]/, ""); if ($0 ~ /Pending/) pending++} END {print pending+0}')
+failed=$(echo "$output" | awk '/"phase"/ {gsub(/[",: ]/, ""); if ($0 ~ /Failed/) failed++} END {print failed+0}')
+completed=$(echo "$output" | awk '/"phase"/ {gsub(/[",: ]/, ""); if ($0 ~ /Succeeded/) completed++} END {print completed+0}')
+
+# CrashLoopBackOff is in containerStatus, not phase
+crashloopbackoff=$(echo "$output" | awk '/CrashLoopBackOff/ {count++} END {print count+0}')
+
+echo "running.value ${running:-0}"
+echo "pending.value ${pending:-0}"
+echo "failed.value ${failed:-0}"
+echo "completed.value ${completed:-0}"
+echo "crashloopbackoff.value ${crashloopbackoff:-0}"
