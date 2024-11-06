@@ -1,0 +1,146 @@
+#!/bin/sh
+# munin-plugin-pack: Generic Log Monitor
+# Configurable log file monitoring plugin that creates metrics from log patterns.
+#
+# Reads rules from /etc/munin/log-monitor.conf
+# Each line format: logfile|pattern
+# Example:
+#   /var/log/auth.log|Failed password
+#   /var/log/nginx/error.log|500
+#   /var/log/app/app.log|panic
+#
+# Requirements: grep, awk
+# Config variables:
+#   log_monitor_config - Path to config file (default: /etc/munin/log-monitor.conf)
+#   log_monitor_window - Window in lines to scan (default: 1000)
+#
+# SPDX-License-Identifier: MIT
+
+set -eu
+
+PLUGIN_NAME="log_monitor"
+LOG_MONITOR_CONFIG="${log_monitor_config:-/etc/munin/log-monitor.conf}"
+LOG_MONITOR_WINDOW="${log_monitor_window:-1000}"
+
+# --- helpers ---------------------------------------------------------------
+
+# Emit the active ruleset to stdout. Each line is "logfile|pattern".
+# Rules come from the config file when it exists; otherwise a built-in
+# sample rule is emitted so the plugin remains self-describing and the
+# config graph always has at least one series.
+emit_rules() {
+    if [ -f "$LOG_MONITOR_CONFIG" ]; then
+        # Print only non-comment, non-empty lines that contain a pipe.
+        grep -v '^[[:space:]]*#' "$LOG_MONITOR_CONFIG" 2>/dev/null \
+            | grep '[|]' || true
+    fi
+}
+
+# Build a safe Munin field name from a logfile + pattern.
+make_label() {
+    printf '%s_%s' "${1##*/}" "$2" \
+        | tr -c 'a-zA-Z0-9_' '_' \
+        | sed 's/_\{2,\}/_/g; s/^_//; s/_$//'
+}
+
+# --- autoconf ---
+if [ "${1:-}" = "autoconf" ]; then
+    if [ ! -f "$LOG_MONITOR_CONFIG" ]; then
+        echo "no (config file $LOG_MONITOR_CONFIG not found)"
+        exit 0
+    fi
+
+    # Verify at least one rule references a readable log file
+    has_rules=0
+    while IFS='|' read -r logfile pattern; do
+        [ -n "${logfile:-}" ] || continue
+        [ -n "${pattern:-}" ] || continue
+        if [ -r "$logfile" ]; then
+            has_rules=1
+            break
+        fi
+    done <<EOF
+$(emit_rules)
+EOF
+
+    if [ "$has_rules" -eq 1 ]; then
+        echo "yes"
+    else
+        echo "no (no readable log files found in $LOG_MONITOR_CONFIG)"
+    fi
+    exit 0
+fi
+
+# --- config ---
+if [ "${1:-}" = "config" ]; then
+    cat <<'EOF'
+graph_title Log Monitor
+graph_args --base 1000 -l 0
+graph_vlabel Occurrences
+graph_category logs
+graph_info Configurable log monitoring: counts occurrences of defined patterns in log files.
+EOF
+
+    idx=0
+    while IFS='|' read -r logfile pattern; do
+        # Skip malformed lines
+        [ -n "${logfile:-}" ] || continue
+        [ -n "${pattern:-}" ] || continue
+
+        label=$(make_label "$logfile" "$pattern")
+        idx=$((idx + 1))
+
+        # Pick colour
+        case $((idx % 6)) in
+            1) colour="ff0000" ;;
+            2) colour="0088ff" ;;
+            3) colour="00cc00" ;;
+            4) colour="ff8800" ;;
+            5) colour="cc00cc" ;;
+            0) colour="ff0088" ;;
+        esac
+
+        cat <<EOF
+${label}.label ${pattern} in ${logfile##*/}
+${label}.draw LINE2
+${label}.colour ${colour}
+${label}.info Count of "${pattern}" in ${logfile}.
+EOF
+    done <<EOF
+$(emit_rules)
+EOF
+
+    # If no rules were configured, emit a single placeholder series so the
+    # graph is still valid and informs the operator that config is needed.
+    if [ "$idx" -eq 0 ]; then
+        cat <<'EOF'
+no_rules.label (no rules configured)
+no_rules.draw LINE2
+no_rules.colour cccccc
+no_rules.info No rules found in /etc/munin/log-monitor.conf. See examples/log-monitor.conf.
+no_rules.value 0
+EOF
+    fi
+    exit 0
+fi
+
+# --- fetch ---
+while IFS='|' read -r logfile pattern; do
+    [ -n "${logfile:-}" ] || continue
+    [ -n "${pattern:-}" ] || continue
+
+    label=$(make_label "$logfile" "$pattern")
+
+    if [ ! -r "$logfile" ]; then
+        echo "${label}.value U"
+        continue
+    fi
+
+    # Count pattern matches in the last N lines
+    count=$(tail -n "$LOG_MONITOR_WINDOW" "$logfile" 2>/dev/null \
+            | grep -c -- "$pattern" 2>/dev/null || echo 0)
+
+    echo "${label}.value ${count:-0}"
+done <<EOF
+$(emit_rules)
+EOF
