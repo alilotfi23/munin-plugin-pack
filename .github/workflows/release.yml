@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing version: $VERSION"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+
+      - name: Run tests
+        run: |
+          chmod +x tests/*.sh scripts/*.sh
+          bash tests/test-plugins.sh
+
+      - name: Create release package
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          PKG_NAME="munin-plugin-pack"
+
+          mkdir -p "/tmp/${PKG_NAME}-${VERSION}"
+          cp -r plugins examples docs scripts tests \
+            "/tmp/${PKG_NAME}-${VERSION}/"
+          cp README.md CHANGELOG.md CONTRIBUTING.md LICENSE Makefile \
+            .gitignore CODE_OF_CONDUCT.md SECURITY.md \
+            "/tmp/${PKG_NAME}-${VERSION}/"
+
+          tar -czf "${PKG_NAME}-${VERSION}.tar.gz" \
+            -C /tmp "${PKG_NAME}-${VERSION}"
+
+          rm -rf "/tmp/${PKG_NAME}-${VERSION}"
+
+          echo "sha256=$(sha256sum ${PKG_NAME}-${VERSION}.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+          # Also create a zip for Windows users
+          mkdir -p "/tmp/${PKG_NAME}-${VERSION}"
+          tar -xzf "${PKG_NAME}-${VERSION}.tar.gz" -C /tmp
+          (cd /tmp && zip -r "${GITHUB_WORKSPACE}/${PKG_NAME}-${VERSION}.zip" "${PKG_NAME}-${VERSION}")
+          rm -rf "/tmp/${PKG_NAME}-${VERSION}"
+
+          echo "Packages created:"
+          ls -lh "${PKG_NAME}-${VERSION}.tar.gz" "${PKG_NAME}-${VERSION}.zip"
+
+      - name: Generate changelog excerpt
+        id: changelog
+        run: |
+          # Extract the latest version section from CHANGELOG.md
+          VERSION="${{ steps.version.outputs.version }}"
+          if [ -f CHANGELOG.md ]; then
+            # Extract content between version header and next version/unreleased
+            awk "/## \[${VERSION}\]/{found=1; next} found && /^## /{exit} found" CHANGELOG.md > release_notes.md
+            echo "changelog<<EOF" >> "$GITHUB_OUTPUT"
+            cat release_notes.md >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          else
+            echo "No CHANGELOG.md found" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "munin-plugin-pack ${{ steps.version.outputs.version }}"
+          body: ${{ steps.changelog.outputs.changelog }}
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, 'rc') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'alpha') }}
+          files: |
+            munin-plugin-pack-${{ steps.version.outputs.version }}.tar.gz
+            munin-plugin-pack-${{ steps.version.outputs.version }}.zip
+          fail_on_unmatched_files: true
