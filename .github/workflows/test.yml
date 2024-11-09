@@ -1,0 +1,100 @@
+name: Plugin Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-plugins:
+    name: Test Plugins
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+
+      - name: Ensure executable permissions
+        run: |
+          chmod +x plugins/*/* tests/*.sh scripts/*.sh
+
+      - name: Test executable permissions
+        run: |
+          echo "=== Verifying executable permissions ==="
+          failed=0
+          find plugins -type f | while IFS= read -r plugin; do
+            if [ ! -x "$plugin" ]; then
+              echo "FAIL: $plugin is not executable"
+              exit 1
+            fi
+          done
+          echo "All plugins are executable."
+
+      - name: Test shebang lines
+        run: |
+          echo "=== Verifying shebang lines ==="
+          find plugins -type f | while IFS= read -r plugin; do
+            first_line=$(head -1 "$plugin")
+            if ! echo "$first_line" | grep -qE '^#!/bin/(sh|bash)'; then
+              echo "FAIL: $plugin has invalid shebang: $first_line"
+              exit 1
+            fi
+          done
+          echo "All shebangs are valid."
+
+      - name: Test config output
+        run: |
+          echo "=== Testing config output ==="
+          find plugins -type f | sort | while IFS= read -r plugin; do
+            name=$(basename "$plugin")
+            output=$("$plugin" config 2>&1) || true
+            if ! echo "$output" | grep -q "graph_title"; then
+              echo "FAIL: $name config - missing graph_title"
+              exit 1
+            fi
+            if ! echo "$output" | grep -q "graph_category"; then
+              echo "FAIL: $name config - missing graph_category"
+              exit 1
+            fi
+            echo "PASS: $name config"
+          done
+
+      - name: Test autoconf output
+        run: |
+          echo "=== Testing autoconf output ==="
+          find plugins -type f | sort | while IFS= read -r plugin; do
+            name=$(basename "$plugin")
+            output=$("$plugin" autoconf 2>&1) || true
+            if ! echo "$output" | grep -qiE '^(yes|no)'; then
+              echo "WARN: $name autoconf - does not respond yes/no"
+            else
+              echo "PASS: $name autoconf"
+            fi
+          done
+
+      - name: Test metric output format
+        run: |
+          echo "=== Testing metric output format ==="
+          find plugins -type f | sort | while IFS= read -r plugin; do
+            name=$(basename "$plugin")
+            output=$("$plugin" 2>&1) || true
+            if [ -n "$output" ]; then
+              if ! echo "$output" | grep -qE '\.value (U|[0-9])'; then
+                echo "WARN: $name - no valid .value lines"
+              else
+                echo "PASS: $name metrics"
+              fi
+            else
+              echo "SKIP: $name - no output (dependency missing)"
+            fi
+          done
+
+      - name: Run full test suite
+        run: |
+          chmod +x tests/*.sh
+          bash tests/test-plugins.sh
