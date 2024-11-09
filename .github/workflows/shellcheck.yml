@@ -1,0 +1,44 @@
+name: ShellCheck
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  shellcheck:
+    name: ShellCheck Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+
+      - name: Run ShellCheck on plugins
+        run: |
+          echo "=== Checking plugins ==="
+          find plugins -type f | sort | while IFS= read -r script; do
+            echo "Checking: $script"
+            shellcheck --severity=warning --shell=sh "$script"
+          done
+
+      - name: Run ShellCheck on test scripts
+        run: |
+          echo "=== Checking test scripts ==="
+          find tests -name '*.sh' -type f | sort | while IFS= read -r script; do
+            echo "Checking: $script"
+            shellcheck --severity=warning --shell=sh "$script"
+          done
+
+      - name: Run ShellCheck on helper scripts
+        run: |
+          echo "=== Checking helper scripts ==="
+          find scripts -name '*.sh' -type f | sort | while IFS= read -r script; do
+            echo "Checking: $script"
+            shellcheck --severity=warning --shell=sh "$script"
+          done
