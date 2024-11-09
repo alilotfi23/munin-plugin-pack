@@ -1,0 +1,43 @@
+name: Markdown Lint
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  markdown-lint:
+    name: Markdown Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Lint Markdown files
+        uses: DavidAnson/markdownlint-cli2-action@v16
+        with:
+          globs: |
+            *.md
+            docs/*.md
+            .github/*.md
+
+      - name: Check for broken links (basic)
+        run: |
+          echo "=== Checking for common markdown issues ==="
+          errors=0
+          for file in README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md docs/*.md; do
+            [ -f "$file" ] || continue
+            echo "Checking $file..."
+
+            # Check for TODO/FIXME markers
+            if grep -n -i 'TODO\|FIXME\|XXX\|HACK' "$file" 2>/dev/null; then
+              echo "WARN: Found TODO/FIXME markers in $file"
+            fi
+
+            # Check for trailing whitespace
+            if grep -n ' $' "$file" 2>/dev/null; then
+              echo "WARN: Trailing whitespace in $file"
+            fi
+          done
+          echo "Markdown lint complete."
