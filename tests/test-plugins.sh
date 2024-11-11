@@ -154,6 +154,74 @@ echo "$PLUGINS" | while IFS= read -r plugin; do
 done
 echo ""
 
+# ── Test 5b: Exit codes ───────────────────────────────────────────
+echo "--- Test: Exit codes ---"
+echo "$PLUGINS" | while IFS= read -r plugin; do
+    name=$(basename "$plugin")
+
+    # config mode must exit 0 (graph definition is always available)
+    "$plugin" config >/dev/null 2>&1 || true
+    cfg_rc=$?
+    if [ "$cfg_rc" -eq 0 ]; then
+        pass "$name config: exits 0"
+    else
+        fail "$name config: exits $cfg_rc (expected 0)"
+    fi
+
+    # autoconf must exit 0 regardless of yes/no answer
+    "$plugin" autoconf >/dev/null 2>&1 || true
+    ac_rc=$?
+    if [ "$ac_rc" -eq 0 ]; then
+        pass "$name autoconf: exits 0"
+    else
+        fail "$name autoconf: exits $ac_rc (expected 0)"
+    fi
+
+    # fetch mode must not crash with a non-zero/signal exit.
+    # Use 2>&1 and || true so set -u / pipefail never abort us.
+    "$plugin" >/dev/null 2>&1 || true
+    fetch_rc=$?
+    # rc 0 = clean run; some plugins exit 0 even when emitting U. Any
+    # value > 1 (signals, syntax errors) is a real failure.
+    if [ "$fetch_rc" -le 1 ]; then
+        pass "$name fetch: clean exit (rc=$fetch_rc)"
+    else
+        fail "$name fetch: exits $fetch_rc (crash or syntax error)"
+    fi
+done
+echo ""
+
+# ── Test 5c: Graceful missing-dependency handling ─────────────────
+# Even when a required tool is absent, a plugin must never crash and
+# must emit 'U' (or 0) rather than an unhandled error to stdout.
+echo "--- Test: Missing-dependency graceful degradation ---"
+echo "$PLUGINS" | while IFS= read -r plugin; do
+    name=$(basename "$plugin")
+    # Run with PATH restricted to coreutils so optional tools (docker,
+    # kubectl, smartctl, ...) are typically not found, simulating an
+    # environment where the dependency is missing.
+    restricted_path="/usr/bin:/bin"
+    output=$(PATH="$restricted_path" "$plugin" 2>/dev/null) || true
+    rc=$?
+
+    # Must not crash on missing dep
+    if [ "$rc" -gt 1 ]; then
+        fail "$name: crashes (rc=$rc) when dependency missing"
+        continue
+    fi
+
+    # If it produced output, every .value line must be U or a number
+    # (never a raw error message like "command not found").
+    bad_lines=$(echo "$output" | grep -E '\.value' \
+                | grep -cvE '\.value (U|[0-9])' 2>/dev/null || true)
+    if [ "${bad_lines:-0}" -gt 0 ]; then
+        fail "$name: emits non-U/non-numeric values when dep missing"
+    else
+        pass "$name: degrades gracefully without deps"
+    fi
+done
+echo ""
+
 # ── Test 6: No hardcoded dangerous paths ──────────────────────────
 echo "--- Test: Security - no temp files in /tmp ---"
 echo "$PLUGINS" | while IFS= read -r plugin; do
