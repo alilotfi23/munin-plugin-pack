@@ -18,7 +18,7 @@ This guide covers everything you need to create, test, and submit plugins.
 1. Fork the repository
 2. Clone your fork:
    ```bash
-   git clone https://github.com/your-username/munin-plugin-pack.git
+   git clone https://github.com/alilotfi23/munin-plugin-pack.git
    cd munin-plugin-pack
    ```
 3. Run tests to verify everything works:

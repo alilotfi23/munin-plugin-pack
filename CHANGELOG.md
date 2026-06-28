@@ -49,5 +49,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Error handling with U values for missing data
 - SPDX license headers on all files
 
-[Unreleased]: https://github.com/your-org/munin-plugin-pack/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/your-org/munin-plugin-pack/releases/tag/v1.0.0
+[Unreleased]: https://github.com/alilotfi23/munin-plugin-pack/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/alilotfi23/munin-plugin-pack/releases/tag/v1.0.0

@@ -2,9 +2,9 @@
 
 > Production-ready Munin plugins for monitoring Linux servers, Docker, Kubernetes, networking, security, backups, and applications.
 
-[![ShellCheck](https://github.com/your-org/munin-plugin-pack/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/your-org/munin-plugin-pack/actions/workflows/shellcheck.yml)
-[![Plugin Tests](https://github.com/your-org/munin-plugin-pack/actions/workflows/test.yml/badge.svg)](https://github.com/your-org/munin-plugin-pack/actions/workflows/test.yml)
-[![Markdown Lint](https://github.com/your-org/munin-plugin-pack/actions/workflows/markdown-lint.yml/badge.svg)](https://github.com/your-org/munin-plugin-pack/actions/workflows/markdown-lint.yml)
+[![ShellCheck](https://github.com/alilotfi23/munin-plugin-pack/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/alilotfi23/munin-plugin-pack/actions/workflows/shellcheck.yml)
+[![Plugin Tests](https://github.com/alilotfi23/munin-plugin-pack/actions/workflows/test.yml/badge.svg)](https://github.com/alilotfi23/munin-plugin-pack/actions/workflows/test.yml)
+[![Markdown Lint](https://github.com/alilotfi23/munin-plugin-pack/actions/workflows/markdown-lint.yml/badge.svg)](https://github.com/alilotfi23/munin-plugin-pack/actions/workflows/markdown-lint.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-1.0.0-green.svg)](CHANGELOG.md)
 
@@ -86,7 +86,7 @@ Every plugin is:
 ### Option 1: From source (recommended)
 
 ```bash
-git clone https://github.com/your-org/munin-plugin-pack.git
+git clone https://github.com/alilotfi23/munin-plugin-pack.git
 cd munin-plugin-pack
 
 # Install plugins and docs
@@ -102,7 +102,7 @@ sudo systemctl restart munin-node
 ### Option 2: Using the setup helper
 
 ```bash
-git clone https://github.com/your-org/munin-plugin-pack.git
+git clone https://github.com/alilotfi23/munin-plugin-pack.git
 cd munin-plugin-pack
 
 # Link plugins (easier to update — git pull refreshes them)
@@ -122,7 +122,7 @@ sudo ./scripts/setup.sh verify
 
 ```bash
 # Download latest release from GitHub Releases page
-wget https://github.com/your-org/munin-plugin-pack/releases/download/v1.0.0/munin-plugin-pack-1.0.0.tar.gz
+wget https://github.com/alilotfi23/munin-plugin-pack/releases/download/v1.0.0/munin-plugin-pack-1.0.0.tar.gz
 tar xzf munin-plugin-pack-1.0.0.tar.gz
 cd munin-plugin-pack-1.0.0
 sudo make install
@@ -392,7 +392,7 @@ By participating, you agree to abide by the [Code of Conduct](CODE_OF_CONDUCT.md
 - [ ] Auto-generated documentation from plugin metadata
 - [ ] BSD/macOS compatibility testing
 
-Vote on features or suggest new ones via [GitHub Issues](https://github.com/your-org/munin-plugin-pack/issues).
+Vote on features or suggest new ones via [GitHub Issues](https://github.com/alilotfi23/munin-plugin-pack/issues).
 
 ---
 
@@ -478,7 +478,7 @@ in the Software without restriction...
 
 - [Munin Monitoring](https://munin-monitoring.org/) — the project these plugins extend
 - The maintainers of [ssm](https://github.com/munin-monitoring/munin) for the plugin protocol spec
-- All [contributors](https://github.com/your-org/munin-plugin-pack/graphs/contributors) who improve this pack
+- All [contributors](https://github.com/alilotfi23/munin-plugin-pack/graphs/contributors) who improve this pack
 
 ---
 
