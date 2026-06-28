@@ -29,7 +29,7 @@ done
 ### Method 3: Clone Directly
 
 ```bash
-sudo git clone https://github.com/your-org/munin-plugin-pack.git /opt/munin-plugin-pack
+sudo git clone https://github.com/alilotfi23/munin-plugin-pack.git /opt/munin-plugin-pack
 for plugin in /opt/munin-plugin-pack/plugins/*; do
     sudo ln -s "$plugin" /usr/share/munin/plugins/$(basename "$plugin")
 done
